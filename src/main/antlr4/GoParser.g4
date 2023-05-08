@@ -361,7 +361,7 @@ key: expression | literalValue;
 
 element: expression | literalValue;
 
-structType: STRUCT L_CURLY (fieldDecl EOS)* R_CURLY;
+structType: STRUCT L_CURLY (fieldDecl eos)* R_CURLY;
 
 fieldDecl: (
 		identifierList type_
