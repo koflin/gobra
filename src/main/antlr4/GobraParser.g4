@@ -404,7 +404,7 @@ methodSpec:
   | GHOST? specification IDENTIFIER parameters;
 
 // Added ghostTypeLiterals
-type_: typeName typeArgs? | typeLit | ghostTypeLit | L_PAREN type_ R_PAREN;
+type_: typeName index? | typeLit | ghostTypeLit | L_PAREN type_ R_PAREN;
 
 // Added pred types
 typeLit:
@@ -430,7 +430,7 @@ literalType:
   | sliceType
   | mapType
   | ghostTypeLit
-  | typeName typeArgs?;
+  | typeName index?;
 
 implicitArray: L_BRACKET ELLIPSIS R_BRACKET elementType;
 
