@@ -211,6 +211,8 @@ case class PSimpleTypeConstraint(t: PType) extends PTypeConstraint
 
 case class PUnionTypeConstraint(ts: Vector[PType]) extends PTypeConstraint
 
+case class PComparableTypeConstraint() extends PTypeConstraint
+
 
 /**
   * Statements
