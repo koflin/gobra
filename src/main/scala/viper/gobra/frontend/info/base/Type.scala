@@ -132,7 +132,7 @@ object Type {
 
   case object SortT extends PrettyType("Type")
 
-  case class TypeParameterT(id: PIdnDef, constraint: PInterfaceType) extends PrettyType(s"${id.name}")
+  case class TypeParameterT(id: PIdnDef, constraint: PInterfaceType, context: ExternalTypeInfo) extends PrettyType(s"${id.name}")
 
   sealed trait GhostType extends Type
 
@@ -222,7 +222,7 @@ object Type {
   trait TypeNode extends Node {
     def substitute(f: PartialFunction[PIdnDef, Type]): this.type = {
       this.transform({
-        case TypeParameterT(id, _) if f.isDefinedAt(id) => f(id)
+        case TypeParameterT(id, _, _) if f.isDefinedAt(id) => f(id)
       })
     }
 
