@@ -2745,4 +2745,14 @@ class ParserUnitTests extends AnyFunSuite with Matchers with Inside {
       ))), _, _, _, _) =>
     }
   }
+
+  test("Parser: should be able to parse conversion with named type") {
+    frontend.parseExpOrFail("(E[int])(2)") should matchPattern {
+      case PInvoke(
+        PIndexedExp(PNamedOperand(PIdnUse("E")), Vector(PNamedOperand(PIdnUse("int")))),
+        Vector(PIntLit(_, _)),
+        None
+      ) =>
+    }
+  }
 }
