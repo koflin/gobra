@@ -382,6 +382,46 @@ class MemberTypingUnitTests extends AnyFunSuite with Matchers with Inside {
     assert(frontend.wellDefMember(functionDecl, Vector(typeDecl)).valid)
   }
 
+  test("TypeChecker: should accept function that contains reference of shared variable") {
+    // func foo() {
+    //   var x@ int
+    //   var y = &x
+    // }
+    val functionDecl = PFunctionDecl(
+      PIdnDef("foo"),
+      Vector(),
+      Vector(),
+      PResult(Vector()),
+      PFunctionSpec(Vector(), Vector(), Vector(), Vector()),
+      Some(PBodyParameterInfo(Vector()), PBlock(Vector(
+        PVarDecl(Some(PIntType()), Vector(), Vector(PIdnDef("x")), Vector(true)),
+        PVarDecl(None, Vector(PReference(PNamedOperand(PIdnUse("x")))), Vector(PIdnDef("y")), Vector(false))
+      )))
+    )
+
+    assert(frontend.wellDefMember(functionDecl).valid)
+  }
+
+  test("TypeChecker: should reject function that contains reference of exclusive variable") {
+    // func foo() {
+    //   var x int
+    //   var y = &x
+    // }
+    val functionDecl = PFunctionDecl(
+      PIdnDef("foo"),
+      Vector(),
+      Vector(),
+      PResult(Vector()),
+      PFunctionSpec(Vector(), Vector(), Vector(), Vector()),
+      Some(PBodyParameterInfo(Vector()), PBlock(Vector(
+        PVarDecl(Some(PIntType()), Vector(), Vector(PIdnDef("x")), Vector(false)),
+        PVarDecl(None, Vector(PReference(PNamedOperand(PIdnUse("x")))), Vector(PIdnDef("y")), Vector(false))
+      )))
+    )
+
+    assert(!frontend.wellDefMember(functionDecl).valid)
+  }
+
   class TestFrontend {
     def singleMemberProgram(members: Vector[PMember]): PProgram =
       PProgram(
