@@ -479,7 +479,7 @@ trait ExprTyping extends BaseTyping { this: TypeInfoImpl =>
       case t => error(n, s"expected receive-permitting channel but got $t")
     })
 
-    case n@PReference(e) => isExpr(e).out ++ effAddressable.errors(e)(n)
+    case n@PReference(e) => isExpr(e).out
 
     case n@PNegation(e) => isExpr(e).out ++ assignableTo.errors(exprType(e), BooleanT)(n)
 
@@ -771,7 +771,7 @@ trait ExprTyping extends BaseTyping { this: TypeInfoImpl =>
       case t => violation(s"expected receive-permitting channel but got $t")
     }
 
-    case PReference(exp) if effAddressable(exp) => PointerT(exprType(exp))
+    case PReference(exp) => PointerT(exprType(exp))
 
     case n: PAnd => // is boolean if left and right argument are boolean, otherwise is an assertion
       val lt = exprType(n.left)

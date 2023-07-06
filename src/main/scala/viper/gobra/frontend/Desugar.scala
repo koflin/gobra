@@ -14,10 +14,11 @@ import viper.gobra.frontend.info.base.BuiltInMemberTag._
 import viper.gobra.frontend.info.base.Type._
 import viper.gobra.frontend.info.base.{BuiltInMemberTag, Type, SymbolTable => st}
 import viper.gobra.frontend.info.implementation.resolution.MemberPath
+import viper.gobra.frontend.info.implementation.typing.modifiers
 import viper.gobra.frontend.info.{ExternalTypeInfo, TypeInfo}
 import viper.gobra.reporting.Source.{AutoImplProofAnnotation, ImportPreNotEstablished, MainPreNotEstablished}
 import viper.gobra.reporting.{DesugaredMessage, Source}
-import viper.gobra.theory.Addressability
+import viper.gobra.frontend.info.implementation.typing.modifiers.{OwnerModifier, OwnerModifierUnit}
 import viper.gobra.translator.Names
 import viper.gobra.util.Violation.violation
 import viper.gobra.util.{Constants, DesugarWriter, Violation}
@@ -118,7 +119,7 @@ object Desugar {
   }
 
   /** For now, the memberset is computed in an inefficient way. */
-  def computeMemberProxies(decls: Iterable[in.Member], itfImpls: Map[in.InterfaceT, SortedSet[in.Type]], definedT: Map[(String, Addressability), in.Type]): Map[in.Type, SortedSet[in.MemberProxy]] = {
+  def computeMemberProxies(decls: Iterable[in.Member], itfImpls: Map[in.InterfaceT, SortedSet[in.Type]], definedT: Map[(String, modifiers.OwnerModifier), in.Type]): Map[in.Type, SortedSet[in.MemberProxy]] = {
     val keys = itfImpls.flatMap{ case (k, v) => v union Set(k) }.toSet
     val pairs: Set[(in.Type, SortedSet[in.MemberProxy])] = keys.map{ key =>
 
@@ -128,7 +129,7 @@ object Desugar {
           t match {
             case t: in.InterfaceT => Some(t)
             case t: in.DefinedT =>
-              definedT.get(t.name, t.addressability) match {
+              definedT.get(t.name, t.ownerModifier) match {
                 case Some(ut) => underlyingItf(ut)
                 case None => None
               }
@@ -277,7 +278,7 @@ object Desugar {
         (s.paramKeys zip s.paramExprs) map { case (k, exp) => argsToIdx(k) -> exprD(ctx, info)(exp).res }
       }
       val params = paramsWithIdx.map {
-        case (i, exp) => i -> implicitConversion(exp.typ, typeD(funcTypeInfo.typ(fArgs(i-1)), Addressability.inParameter)(exp.info), exp)
+        case (i, exp) => i -> implicitConversion(exp.typ, typeD(funcTypeInfo.typ(fArgs(i-1)), OwnerModifier.inParameter)(exp.info), exp)
       }.toMap
       in.ClosureSpec(proxy, params)(meta(s, info))
     }
@@ -292,8 +293,8 @@ object Desugar {
         in.BuiltInMethod(inRecv, tag, proxy, inArgs)(src)
       }
 
-      val inRecv = recv.withAddressability(Addressability.inParameter)
-      val inArgs = args.map(_.withAddressability(Addressability.inParameter))
+      val inRecv = recv.withOwnerModifier(OwnerModifier.inParameter)
+      val inArgs = args.map(_.withOwnerModifier(OwnerModifier.inParameter))
       memberProxy(tag, inRecv +: inArgs, create).name
     }
 
@@ -303,7 +304,7 @@ object Desugar {
         in.BuiltInFunction(tag, proxy, inArgs)(src)
       }
 
-      val inArgs = args.map(_.withAddressability(Addressability.inParameter))
+      val inArgs = args.map(_.withOwnerModifier(OwnerModifier.inParameter))
       memberProxy(tag, inArgs, create).name
     }
 
@@ -313,7 +314,7 @@ object Desugar {
         in.BuiltInFPredicate(tag, proxy, inArgs)(src)
       }
 
-      val inArgs = args.map(_.withAddressability(Addressability.inParameter))
+      val inArgs = args.map(_.withOwnerModifier(OwnerModifier.inParameter))
       memberProxy(tag, inArgs, create).name
     }
 
@@ -326,8 +327,8 @@ object Desugar {
         in.BuiltInMPredicate(inRecv, tag, proxy, inArgs)(src)
       }
 
-      val inRecv = recv.withAddressability(Addressability.inParameter)
-      val inArgs = args.map(_.withAddressability(Addressability.inParameter))
+      val inRecv = recv.withOwnerModifier(OwnerModifier.inParameter)
+      val inArgs = args.map(_.withOwnerModifier(OwnerModifier.inParameter))
       memberProxy(tag, inRecv +: inArgs, create).name
     }
 
@@ -440,7 +441,7 @@ object Desugar {
         case g: st.GlobalVariable => globalVarD(g)(src)
         case w: st.Wildcard =>
           // wildcards are considered exclusive as they cannot be referenced anywhere else
-          val typ = typeD(info.typ(w.decl), Addressability.wildcard)(src)
+          val typ = typeD(info.typ(w.decl), OwnerModifier.wildcard)(src)
           val scope = info.codeRoot(decl).asInstanceOf[PPackage]
           freshGlobalVar(typ, scope, w.context)(src)
         case e => Violation.violation(s"Expected a global variable or wildcard, but instead got $e")
@@ -450,8 +451,8 @@ object Desugar {
         // assign to all variables its default value:
         val assignsToDefault =
           gvars.map{
-            case v if v.typ.addressability.isShared =>
-              singleAss(in.Assignee.Var(v), in.DfltVal(v.typ.withAddressability(Addressability.Exclusive))(src))(src)
+            case v if v.typ.ownerModifier == OwnerModifier.Shared =>
+              singleAss(in.Assignee.Var(v), in.DfltVal(v.typ.withOwnerModifier(OwnerModifier.Exclusive))(src))(src)
             case v =>
               in.Assume(in.ExprAssertion(in.GhostEqCmp(v, in.DfltVal(v.typ)(src))(src))(src))(src)
           }
@@ -464,7 +465,7 @@ object Desugar {
             in.Block(
               decls = Vector(),
               stmts = gvars.zip(t.args).map{
-                case (l, r) if l.typ.addressability.isShared => singleAss(in.Assignee.Var(l), r)(src)
+                case (l, r) if l.typ.ownerModifier == OwnerModifier.Shared => singleAss(in.Assignee.Var(l), r)(src)
                 case (l, r) => in.Assume(in.ExprAssertion(in.GhostEqCmp(l,r)(src))(src))(src)
               }
             )(src)
@@ -474,7 +475,7 @@ object Desugar {
       } else {
         // single-assign mode:
         val assigns = gvars.zip(exps).map{
-          case (l, wr) if l.typ.addressability.isShared =>
+          case (l, wr) if l.typ.ownerModifier == OwnerModifier.Shared =>
             block(for { r <- wr } yield singleAss(in.Assignee.Var(l), r)(src))
           case (l, wr) =>
             block(for { r <- wr } yield in.Assume(in.ExprAssertion(in.GhostEqCmp(l,r)(src))(src))(src))
@@ -484,7 +485,7 @@ object Desugar {
     }
 
     def globalVarD(v: st.GlobalVariable)(src: Meta): in.GlobalVar = {
-      val addr = if (v.addressable) Addressability.Shared else Addressability.Exclusive
+      val addr = if (v.shared) OwnerModifier.Shared else OwnerModifier.Exclusive
       val typ = typeD(v.context.typ(v.id), addr)(src)
       val proxy = globalVarProxyD(v)
       in.GlobalVar(proxy, typ)(src)
@@ -502,16 +503,16 @@ object Desugar {
         val src = meta(id, info)
         val gVar = globalConstD(sc)(src)
         val lit: in.Lit = underlyingType(gVar.typ) match {
-          case in.BoolT(Addressability.Exclusive) =>
+          case in.BoolT(OwnerModifier.Exclusive) =>
             val constValue = sc.context.boolConstantEvaluation(sc.exp)
             in.BoolLit(constValue.get)(src)
-          case in.StringT(Addressability.Exclusive) =>
+          case in.StringT(OwnerModifier.Exclusive) =>
             val constValue = sc.context.stringConstantEvaluation(sc.exp)
             in.StringLit(constValue.get)(src)
-          case x if underlyingType(x).isInstanceOf[in.IntT] && x.addressability == Addressability.Exclusive =>
+          case x if underlyingType(x).isInstanceOf[in.IntT] && x.ownerModifier == OwnerModifier.Exclusive =>
             val constValue = sc.context.intConstantEvaluation(sc.exp)
             in.IntLit(constValue.get)(src)
-          case in.PermissionT(Addressability.Exclusive) =>
+          case in.PermissionT(OwnerModifier.Exclusive) =>
             val constValue = sc.context.permConstantEvaluation(sc.exp)
             in.PermLit(constValue.get._1, constValue.get._2)(src)
           case _ => ???
@@ -529,8 +530,8 @@ object Desugar {
     //       However, currently, this would require to have versions of [[typeD]].
     /** desugars a defined type for each addressability modifier to register them with [[definedTypes]] */
     def desugarAllTypeDefVariants(decl: PTypeDef): Unit = {
-      typeD(DeclaredT(decl, info), Addressability.Shared)(meta(decl, info))
-      typeD(DeclaredT(decl, info), Addressability.Exclusive)(meta(decl, info))
+      typeD(DeclaredT(decl, info), OwnerModifier.Shared)(meta(decl, info))
+      typeD(DeclaredT(decl, info), OwnerModifier.Exclusive)(meta(decl, info))
     }
 
     def functionD(decl: PFunctionDecl): in.FunctionMember =
@@ -975,7 +976,7 @@ object Desugar {
         }
 
         idn match {
-          case _: PWildcard => freshDeclaredExclusiveVar(t.withAddressability(Addressability.Exclusive), idn, info)(src).map(in.Assignee.Var)
+          case _: PWildcard => freshDeclaredExclusiveVar(t.withOwnerModifier(OwnerModifier.Exclusive), idn, info)(src).map(in.Assignee.Var)
 
           case _ =>
             val x = assignableVarD(ctx, info)(idn) match {
@@ -1059,15 +1060,15 @@ object Desugar {
 
         jSrc = if (hasValue) meta(shorts(1), info) else src
 
-        c <- freshDeclaredExclusiveVar(exp.typ.withAddressability(Addressability.exclusiveVariable), n, info)(rangeExpSrc)
-        length <- freshDeclaredExclusiveVar(in.IntT(Addressability.exclusiveVariable), n, info)(rangeExpSrc)
+        c <- freshDeclaredExclusiveVar(exp.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), n, info)(rangeExpSrc)
+        length <- freshDeclaredExclusiveVar(in.IntT(OwnerModifier.exclusiveVariable), n, info)(rangeExpSrc)
 
-        i = leftOfAssignmentNoInit(shorts(0), info)(in.IntT(Addressability.exclusiveVariable))
+        i = leftOfAssignmentNoInit(shorts(0), info)(in.IntT(OwnerModifier.exclusiveVariable))
         _ <- declare(i)
         j = if (hasValue) leftOfAssignmentNoInit(shorts(1), info)(elemType) else i
 
         _ <- if (hasValue) declare(j) else unit(in.Seqn(Vector())(src))
-        i0 = leftOfAssignmentNoInit(range.enumerated, info)(in.IntT(Addressability.exclusiveVariable))
+        i0 = leftOfAssignmentNoInit(range.enumerated, info)(in.IntT(OwnerModifier.exclusiveVariable))
         _ <- declare(i0)
 
         (dTerPre, dTer) <- prelude(option(spec.terminationMeasure map terminationMeasureD(ctx, info)))
@@ -1200,13 +1201,13 @@ object Desugar {
 
         hasValue = ass.length > 1 && !(ass(1).isInstanceOf[PBlankIdentifier])
 
-        c <- freshDeclaredExclusiveVar(exp.typ.withAddressability(Addressability.exclusiveVariable), n, info)(rangeExpSrc)
-        length <- freshDeclaredExclusiveVar(in.IntT(Addressability.exclusiveVariable), n, info)(rangeExpSrc)
+        c <- freshDeclaredExclusiveVar(exp.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), n, info)(rangeExpSrc)
+        length <- freshDeclaredExclusiveVar(in.IntT(OwnerModifier.exclusiveVariable), n, info)(rangeExpSrc)
 
         i <- goL(ass(0))
         j <- if (hasValue) goL(ass(1)) else unit(in.Assignee.Var(c))
 
-        i0 = leftOfAssignmentNoInit(range.enumerated, info)(in.IntT(Addressability.exclusiveVariable))
+        i0 = leftOfAssignmentNoInit(range.enumerated, info)(in.IntT(OwnerModifier.exclusiveVariable))
         _ <- declare(i0)
 
         (dTerPre, dTer) <- prelude(option(spec.terminationMeasure map terminationMeasureD(ctx, info)))
@@ -1338,18 +1339,18 @@ object Desugar {
       def desugarMapShortRange(n: PShortForRange, range: PRange, shorts: Vector[PUnkLikeId], spec: PLoopSpec, body: PBlock)(src: Source.Parser.Info): Writer[in.Stmt] = unit(block(for {
         exp <- goE(range.exp)
 
-        c <- freshDeclaredExclusiveVar(exp.typ.withAddressability(Addressability.exclusiveVariable), n, info)(src)
+        c <- freshDeclaredExclusiveVar(exp.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), n, info)(src)
 
         (keyType, valType) = underlyingType(exp.typ) match {
-          case in.MapT(k, v, _) => (k.withAddressability(Addressability.exclusiveVariable), v.withAddressability(Addressability.exclusiveVariable))
+          case in.MapT(k, v, _) => (k.withOwnerModifier(OwnerModifier.exclusiveVariable), v.withOwnerModifier(OwnerModifier.exclusiveVariable))
           case _ => violation("unexpected type of range expression")
         }
 
         domain = in.MapKeys(c, underlyingType(exp.typ))(src)
 
-        visited <- leftOfAssignmentD(range.enumerated, info)(in.SetT(keyType, Addressability.exclusiveVariable))
+        visited <- leftOfAssignmentD(range.enumerated, info)(in.SetT(keyType, OwnerModifier.exclusiveVariable))
 
-        perm <- freshDeclaredExclusiveVar(in.PermissionT(Addressability.exclusiveVariable), n, info)(src)
+        perm <- freshDeclaredExclusiveVar(in.PermissionT(OwnerModifier.exclusiveVariable), n, info)(src)
 
         initPerm = singleAss(in.Assignee.Var(perm), in.PermLit(1, MapExhalePermDenom)(src))(src)
 
@@ -1419,17 +1420,17 @@ object Desugar {
         exp <- goE(range.exp)
 
         keyType = underlyingType(exp.typ) match {
-          case in.MapT(k, _, _) => k.withAddressability(Addressability.exclusiveVariable)
+          case in.MapT(k, _, _) => k.withOwnerModifier(OwnerModifier.exclusiveVariable)
           case _ => violation("unexpected type of range expression")
         }
 
-        c <- freshDeclaredExclusiveVar(exp.typ.withAddressability(Addressability.exclusiveVariable), n, info)(src)
+        c <- freshDeclaredExclusiveVar(exp.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), n, info)(src)
 
         domain = in.MapKeys(c, underlyingType(exp.typ))(src)
 
-        visited <- leftOfAssignmentD(range.enumerated, info)(in.SetT(keyType, Addressability.exclusiveVariable))
+        visited <- leftOfAssignmentD(range.enumerated, info)(in.SetT(keyType, OwnerModifier.exclusiveVariable))
 
-        perm <- freshDeclaredExclusiveVar(in.PermissionT(Addressability.exclusiveVariable), n, info)(src)
+        perm <- freshDeclaredExclusiveVar(in.PermissionT(OwnerModifier.exclusiveVariable), n, info)(src)
 
         initPerm = singleAss(in.Assignee.Var(perm), in.PermLit(1, MapExhalePermDenom)(src))(src)
 
@@ -1581,7 +1582,7 @@ object Desugar {
                   Vector(s)
                 case t => Vector(t)
               }
-              val targets = targetTypes.map(typ => freshExclusiveVar(typeD(typ, Addressability.exclusiveVariable)(src), stmt, info)(src))
+              val targets = targetTypes.map(typ => freshExclusiveVar(typeD(typ, OwnerModifier.exclusiveVariable)(src), stmt, info)(src))
               for {
                 _ <- declare(targets: _*)
                 dE <- w
@@ -1599,7 +1600,7 @@ object Desugar {
                 for{le <- goL(left.head); re <- goE(right.head)} yield singleAss(le, re)(src)
               } else {
                 // copy results to temporary variables and then to assigned variables
-                val temps = left map (l => freshExclusiveVar(typeD(info.typ(l), Addressability.exclusiveVariable)(src), stmt, info)(src))
+                val temps = left map (l => freshExclusiveVar(typeD(info.typ(l), OwnerModifier.exclusiveVariable)(src), stmt, info)(src))
                 val resToTemps = (temps zip right).map{ case (l, r) =>
                   for{re <- goE(r)} yield singleAss(in.Assignee.Var(l), re)(src)
                 }
@@ -1648,7 +1649,7 @@ object Desugar {
                 re  <- goE(right.head)
                 les <- sequence(left.map{ l =>
                   for {
-                    dL <- leftOfAssignmentD(l, info)(typeD(info.typ(l), Addressability.exclusiveVariable)(src))
+                    dL <- leftOfAssignmentD(l, info)(typeD(info.typ(l), OwnerModifier.exclusiveVariable)(src))
                   } yield dL
                 })
               } yield multiassD(les, re, stmt)(src))
@@ -1660,7 +1661,7 @@ object Desugar {
               seqn(sequence((left zip right).map{ case (l, r) =>
                 for {
                   re <- goE(r)
-                  typ = typOpt.map(x => typeD(info.symbType(x), Addressability.exclusiveVariable)(src)).getOrElse(re.typ)
+                  typ = typOpt.map(x => typeD(info.symbType(x), OwnerModifier.exclusiveVariable)(src)).getOrElse(re.typ)
                   dL <- leftOfAssignmentD(l, info)(typ)
                   le <- unit(dL)
                 } yield singleAss(le, re)(src)
@@ -1675,13 +1676,13 @@ object Desugar {
                 })
               } yield multiassD(les, re, stmt)(src))
             } else if (right.isEmpty && typOpt.nonEmpty) {
-              val typ = typeD(info.symbType(typOpt.get), Addressability.exclusiveVariable)(src)
+              val typ = typeD(info.symbType(typOpt.get), OwnerModifier.exclusiveVariable)(src)
               val lelems = sequence(left.map{ l =>
                 for {
                   dL <- leftOfAssignmentD(l, info)(typ)
                 } yield dL
               })
-              val relems = left.map{ l => in.DfltVal(typeD(info.symbType(typOpt.get), Addressability.defaultValue)(meta(l, info)))(meta(l, info)) }
+              val relems = left.map{ l => in.DfltVal(typeD(info.symbType(typOpt.get), OwnerModifier.defaultValue)(meta(l, info)))(meta(l, info)) }
               seqn(lelems.map{ lelemsV =>
                 in.Seqn((lelemsV zip relems).map{
                   case (l, r) => singleAss(l, r)(src)
@@ -1698,7 +1699,7 @@ object Desugar {
             for {
               dPre <- maybeStmtD(ctx)(pre)(src)
               dExp <- exprD(ctx, info)(exp)
-              exprVar <- freshDeclaredExclusiveVar(dExp.typ.withAddressability(Addressability.exclusiveVariable), stmt, info)(dExp.info)
+              exprVar <- freshDeclaredExclusiveVar(dExp.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), stmt, info)(dExp.info)
               exprAss = singleAss(in.Assignee.Var(exprVar), dExp)(dExp.info)
               _ <- write(exprAss)
               clauses <- sequence(cases.map(c => switchCaseD(c, exprVar)(ctx)))
@@ -1786,7 +1787,7 @@ object Desugar {
             for {
               dPre <- maybeStmtD(ctx)(pre)(src)
               dExp <- exprD(ctx, info)(exp)
-              exprVar <- freshDeclaredExclusiveVar(dExp.typ.withAddressability(Addressability.exclusiveVariable), stmt, info)(dExp.info)
+              exprVar <- freshDeclaredExclusiveVar(dExp.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), stmt, info)(dExp.info)
               exprAss = singleAss(in.Assignee.Var(exprVar), dExp)(dExp.info)
               _ <- write(exprAss)
               clauses <- sequence(cases.map(c => typeSwitchCaseD(c, exprVar, binder)(ctx)))
@@ -1829,7 +1830,7 @@ object Desugar {
               //    modified  is the set of free variables in the body that are modified
               val dummyBody = {
                 val arguments = info.freeVariables(n).map(localVarContextFreeD(_, info))
-                val modified = info.freeModified(n).map(localVarContextFreeD(_, info)).filter(_.typ.addressability.isExclusive)
+                val modified = info.freeModified(n).map(localVarContextFreeD(_, info)).filter(_.typ.ownerModifier == OwnerModifier.Exclusive)
                 val argumentsCopy = arguments map (v => v.copy(id = s"${v.id}$$copy")(src))
                 in.Block(
                   argumentsCopy,
@@ -1902,7 +1903,7 @@ object Desugar {
         assign = for {
           bId <- bind
           typ = left match {
-            case Vector(t: PType) => typeD(info.symbType(t), Addressability.rValue)(Source.Parser.Internal)
+            case Vector(t: PType) => typeD(info.symbType(t), OwnerModifier.rValue)(Source.Parser.Internal)
             case Vector(_: PNilLit) => scrutinee.typ
             case l if l.length > 1 => scrutinee.typ
             case c => violation(s"This case should be unreachable, but got $c")
@@ -1935,8 +1936,8 @@ object Desugar {
           in.Seqn(lefts.zip(args) map { case (l, r) => singleAss(l, r)(src)})(src)
 
         case n: in.TypeAssertion if lefts.size == 2 =>
-          val resTarget = freshExclusiveVar(lefts(0).op.typ.withAddressability(Addressability.exclusiveVariable), astCtx, info)(src)
-          val successTarget = freshExclusiveVar(lefts(1).op.typ.withAddressability(Addressability.exclusiveVariable), astCtx, info)(src)
+          val resTarget = freshExclusiveVar(lefts(0).op.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), astCtx, info)(src)
+          val successTarget = freshExclusiveVar(lefts(1).op.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), astCtx, info)(src)
           in.Block(
             Vector(resTarget, successTarget),
             Vector( // declare for the fresh variables is not necessary because they are put into a block
@@ -1947,8 +1948,8 @@ object Desugar {
           )(src)
 
         case n: in.Receive if lefts.size == 2 =>
-          val resTarget = freshExclusiveVar(lefts(0).op.typ.withAddressability(Addressability.exclusiveVariable), astCtx, info)(src)
-          val successTarget = freshExclusiveVar(in.BoolT(Addressability.exclusiveVariable), astCtx, info)(src)
+          val resTarget = freshExclusiveVar(lefts(0).op.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), astCtx, info)(src)
+          val successTarget = freshExclusiveVar(in.BoolT(OwnerModifier.exclusiveVariable), astCtx, info)(src)
           val recvChannelProxy = n.recvChannel
           val recvGivenPermProxy = n.recvGivenPerm
           val recvGotPermProxy = n.recvGotPerm
@@ -1963,8 +1964,8 @@ object Desugar {
           )(src)
 
         case l@ in.IndexedExp(base, _, _) if base.typ.isInstanceOf[in.MapT] && lefts.size == 2 =>
-          val resTarget = freshExclusiveVar(lefts(0).op.typ.withAddressability(Addressability.exclusiveVariable), astCtx, info)(src)
-          val successTarget = freshExclusiveVar(in.BoolT(Addressability.exclusiveVariable), astCtx, info)(src)
+          val resTarget = freshExclusiveVar(lefts(0).op.typ.withOwnerModifier(OwnerModifier.exclusiveVariable), astCtx, info)(src)
+          val successTarget = freshExclusiveVar(in.BoolT(OwnerModifier.exclusiveVariable), astCtx, info)(src)
           in.Block(
             Vector(resTarget, successTarget),
             Vector(
@@ -1989,7 +1990,7 @@ object Desugar {
       for {
         r <- exprD(ctx, info)(p.base)
         base = applyMemberPathD(r, p.path)(src)
-        f = structMemberD(p.symb, Addressability.fieldLookup(base.typ.addressability))(src)
+        f = structMemberD(p.symb, OwnerModifier.fieldLookup(base.typ.ownerModifier))(src)
       } yield in.FieldRef(base, f)(src)
     }
 
@@ -2001,7 +2002,7 @@ object Desugar {
           val adtT: AdtT = context.symbType(adtDecl).asInstanceOf[AdtT]
           in.AdtDestructor(base, in.Field(
             nm.adtField(decl.id.name, adtT),
-            typeD(context.symbType(decl.typ), Addressability.mathDataStructureElement)(src),
+            typeD(context.symbType(decl.typ), OwnerModifier.mathDataStructureElement)(src),
             ghost = true
           )(src))(src)
 
@@ -2057,14 +2058,14 @@ object Desugar {
 
       def functionCall(targets: Vector[in.LocalVar], func: ap.FunctionKind, args: Vector[in.Expr], spec: Option[in.ClosureSpec]): in.Stmt = spec match {
         case Some(spec) =>
-          val funcObject = in.FunctionObject(getFunctionProxy(func, args), typeD(info.typ(func.id), Addressability.rValue)(src))(src)
+          val funcObject = in.FunctionObject(getFunctionProxy(func, args), typeD(info.typ(func.id), OwnerModifier.rValue)(src))(src)
           in.ClosureCall(targets, funcObject, args, spec)(src)
         case _ => in.FunctionCall(targets, getFunctionProxy(func, args), args)(src)
       }
 
       def pureFunctionCall(func: ap.FunctionKind, args: Vector[in.Expr], spec: Option[in.ClosureSpec], resT: in.Type): in.Expr = spec match {
         case Some(spec) =>
-          val funcObject = in.FunctionObject(getFunctionProxy(func, args), typeD(info.typ(func.id), Addressability.rValue)(src))(src)
+          val funcObject = in.FunctionObject(getFunctionProxy(func, args), typeD(info.typ(func.id), OwnerModifier.rValue)(src))(src)
           in.PureClosureCall(funcObject, args, spec, resT)(src)
         case _ => in.PureFunctionCall(getFunctionProxy(func, args), args, resT)(src)
       }
@@ -2082,7 +2083,7 @@ object Desugar {
             case in.TupleT(ts, _) => ts
             case _ => Vector(resT)
           }
-          val methObject = in.MethodObject(recv, meth, in.FunctionT(args.map(_.typ), resType, Addressability.rValue))(src)
+          val methObject = in.MethodObject(recv, meth, in.FunctionT(args.map(_.typ), resType, OwnerModifier.rValue))(src)
           in.ClosureCall(targets, methObject, args, spec)(src)
         case _ => in.MethodCall(targets, recv, meth, args)(src)
       }
@@ -2093,7 +2094,7 @@ object Desugar {
             case in.TupleT(ts, _) => ts
             case _ => Vector(resT)
           }
-          val methObject = in.MethodObject(recv, meth, in.FunctionT(args.map(_.typ), resType, Addressability.rValue))(src)
+          val methObject = in.MethodObject(recv, meth, in.FunctionT(args.map(_.typ), resType, OwnerModifier.rValue))(src)
           in.PureClosureCall(methObject, args, spec, resT)(src)
         case _ => in.PureMethodCall(recv, meth, args, resT)(src)
       }
@@ -2129,7 +2130,7 @@ object Desugar {
         // `BuiltInFunctionKind` has to be checked first since it implements `Symbolic` as well
         case f: ap.BuiltInFunctionKind =>
           val ft = getBuiltInFuncType(f)
-          val resT = typeD(ft.result, Addressability.callResult)(src)
+          val resT = typeD(ft.result, OwnerModifier.callResult)(src)
           val targets = resT match {
             case in.VoidT => Vector()
             case _ => Vector(freshExclusiveVar(resT, expr, info)(src))
@@ -2137,8 +2138,8 @@ object Desugar {
           (resT, targets)
         case base: ap.Symbolic => base.symb match {
           case fsym: st.WithResult =>
-            val resT = typeD(fsym.context.typ(fsym.result), Addressability.callResult)(src)
-            val targets = fsym.result.outs map (o => freshExclusiveVar(typeD(fsym.context.symbType(o.typ), Addressability.exclusiveVariable)(src), expr, info)(src))
+            val resT = typeD(fsym.context.typ(fsym.result), OwnerModifier.callResult)(src)
+            val targets = fsym.result.outs map (o => freshExclusiveVar(typeD(fsym.context.symbType(o.typ), OwnerModifier.exclusiveVariable)(src), expr, info)(src))
             (resT, targets)
           case c => Violation.violation(s"This case should be unreachable, but got $c")
         }
@@ -2182,7 +2183,7 @@ object Desugar {
                 args <- dArgs
                 convertedArgs = convertArgs(args)
                 proxy = methodProxy(iim.id, iim.symb.context.getTypeInfo)
-                recvType = typeD(iim.symb.itfType, Addressability.receiver)(src)
+                recvType = typeD(iim.symb.itfType, OwnerModifier.receiver)(src)
                 spec = p.maybeSpec.map(closureSpecD(ctx, info))
               } yield Right(pureMethodCall(implicitThisD(recvType)(src), proxy, args, spec, resT))
             } else {
@@ -2190,7 +2191,7 @@ object Desugar {
                 args <- dArgs
                 convertedArgs = convertArgs(args)
                 proxy = methodProxy(iim.id, iim.symb.context.getTypeInfo)
-                recvType = typeD(iim.symb.itfType, Addressability.receiver)(src)
+                recvType = typeD(iim.symb.itfType, OwnerModifier.receiver)(src)
                 spec = p.maybeSpec.map(closureSpecD(ctx, info))
               } yield Left((targets, methodCall(targets, implicitThisD(recvType)(src), proxy, convertedArgs, resT, spec)))
             }
@@ -2260,13 +2261,13 @@ object Desugar {
         dArgs <- functionCallArgsD(expr.args, params)(ctx, info, src)
         args = arguments(dArgs zip params)
         closure <- exprD(ctx, info)(expr.base.asInstanceOf[PExpression])
-        resT = typeD(func.context.typ(func.result), Addressability.callResult)(src)
+        resT = typeD(func.context.typ(func.result), OwnerModifier.callResult)(src)
       } yield Right(in.PureClosureCall(closure, arguments(args zip params), spec, resT)(src))
       else for {
         dArgs <- functionCallArgsD(expr.args, params)(ctx, info, src)
         args = arguments(dArgs zip params)
         closure <- exprD(ctx, info)(expr.base.asInstanceOf[PExpression])
-        targets = func.result.outs map (o => freshExclusiveVar(typeD(func.context.symbType(o.typ), Addressability.exclusiveVariable)(src), expr, info)(src))
+        targets = func.result.outs map (o => freshExclusiveVar(typeD(func.context.symbType(o.typ), OwnerModifier.exclusiveVariable)(src), expr, info)(src))
       } yield Left((targets, in.ClosureCall(targets, closure, arguments(args zip params), spec)(src)))
     }
 
@@ -2297,7 +2298,7 @@ object Desugar {
       variadicTypeOption match {
         case Some(variadicTyp) => for {
           res <- wRes
-          variadicInTyp = typeD(variadicTyp, Addressability.sliceElement)(src)
+          variadicInTyp = typeD(variadicTyp, OwnerModifier.sliceElement)(src)
           len = res.length
           argList <- res.lastOption.map(_.typ) match {
             case Some(t) if underlyingType(t).isInstanceOf[in.SliceT] &&
@@ -2308,18 +2309,18 @@ object Desugar {
               // supports chaining function calls with variadic functions of one argument
               val argsMap = getArgsMap(res.last.asInstanceOf[in.Tuple].args, variadicInTyp)
               for {
-                target <- freshDeclaredExclusiveVar(in.SliceT(variadicInTyp, Addressability.Exclusive), args.last, info)(src)
+                target <- freshDeclaredExclusiveVar(in.SliceT(variadicInTyp, OwnerModifier.Exclusive), args.last, info)(src)
                 _ <- write(in.NewSliceLit(target, variadicInTyp, argsMap)(src))
               } yield Vector(target)
             case _ if len >= parameterCount =>
               val argsMap = getArgsMap(res.drop(parameterCount - 1), variadicInTyp)
               for {
-                target <- freshDeclaredExclusiveVar(in.SliceT(variadicInTyp, Addressability.Exclusive), args.last, info)(src)
+                target <- freshDeclaredExclusiveVar(in.SliceT(variadicInTyp, OwnerModifier.Exclusive), args.last, info)(src)
                 _ <- write(in.NewSliceLit(target, variadicInTyp, argsMap)(src))
               } yield res.take(parameterCount - 1) :+ target
             case _ if len == parameterCount - 1 =>
               // variadic argument not passed
-              unit(res :+ in.NilLit(in.SliceT(variadicInTyp, Addressability.nil))(src))
+              unit(res :+ in.NilLit(in.SliceT(variadicInTyp, OwnerModifier.nil))(src))
             case t => violation(s"this case should be unreachable, but got $t")
           }
         } yield argList
@@ -2360,7 +2361,7 @@ object Desugar {
     }
 
     def arguments(args: Vector[(in.Expr, Type)]): Vector[in.Expr] = {
-      val assignments = args.map{ case (from, pTo) => (from, typeD(pTo, Addressability.inParameter)(from.info)) }
+      val assignments = args.map{ case (from, pTo) => (from, typeD(pTo, OwnerModifier.inParameter)(from.info)) }
       assignments.map{ case (from, to) => implicitConversion(from.typ, to, from) }
     }
 
@@ -2463,17 +2464,17 @@ object Desugar {
             case Some(_: ap.LocalVariable) => unit(varD(ctx, info)(n.id))
             case Some(p: ap.GlobalVariable) => unit(globalVarD(p.symb)(src))
             case Some(_: ap.NamedType) =>
-              val name = typeD(info.symbType(n), Addressability.Exclusive)(src).asInstanceOf[in.DefinedT].name
+              val name = typeD(info.symbType(n), OwnerModifier.Exclusive)(src).asInstanceOf[in.DefinedT].name
               unit(in.DefinedTExpr(name)(src))
             case Some(_: ap.BuiltInType) =>
-              val name = typeD(info.symbType(n), Addressability.Exclusive)(src).asInstanceOf[in.DefinedT].name
+              val name = typeD(info.symbType(n), OwnerModifier.Exclusive)(src).asInstanceOf[in.DefinedT].name
               unit(in.DefinedTExpr(name)(src))
             case Some(f: ap.Function) =>
               val name = idName(f.id, info)
-              unit(in.FunctionObject(in.FunctionProxy(name)(src), typeD(info.typ(f.id), Addressability.rValue)(src))(src))
+              unit(in.FunctionObject(in.FunctionProxy(name)(src), typeD(info.typ(f.id), OwnerModifier.rValue)(src))(src))
             case Some(c: ap.Closure) =>
               val name = idName(c.id, info)
-              unit(in.ClosureObject(in.FunctionLitProxy(name)(src), typeD(info.typ(c.id), Addressability.rValue)(src))(src))
+              unit(in.ClosureObject(in.FunctionLitProxy(name)(src), typeD(info.typ(c.id), OwnerModifier.rValue)(src))(src))
 
             case p => Violation.violation(s"encountered unexpected pattern: $p")
           }
@@ -2489,11 +2490,11 @@ object Desugar {
             case c: PCompositeLit =>
               for {
                 c <- compositeLitD(ctx, info)(c)
-                v <- freshDeclaredExclusiveVar(in.PointerT(c.typ.withAddressability(Addressability.Shared), Addressability.reference), expr, info)(src)
+                v <- freshDeclaredExclusiveVar(in.PointerT(c.typ.withOwnerModifier(OwnerModifier.Shared), OwnerModifier.reference), expr, info)(src)
                 _ <- write(in.New(v, c)(src))
               } yield v
 
-            case _ => addressableD(ctx, info)(exp) map (a => in.Ref(a, in.PointerT(a.op.typ, Addressability.reference))(src))
+            case _ => addressableD(ctx, info)(exp) map (a => in.Ref(a, in.PointerT(a.op.typ, OwnerModifier.reference))(src))
           }
 
           case n: PDot => info.resolve(n) match {
@@ -2502,18 +2503,18 @@ object Desugar {
             case Some(p: ap.Constant) => unit[in.Expr](globalConstD(p.symb)(src))
             case Some(p: ap.GlobalVariable) => unit[in.Expr](globalVarD(p.symb)(src))
             case Some(_: ap.NamedType) =>
-              val name = typeD(info.symbType(n), Addressability.Exclusive)(src).asInstanceOf[in.DefinedT].name
+              val name = typeD(info.symbType(n), OwnerModifier.Exclusive)(src).asInstanceOf[in.DefinedT].name
               unit(in.DefinedTExpr(name)(src))
             case Some(_: ap.BuiltInType) =>
-              val name = typeD(info.symbType(n), Addressability.Exclusive)(src).asInstanceOf[in.DefinedT].name
+              val name = typeD(info.symbType(n), OwnerModifier.Exclusive)(src).asInstanceOf[in.DefinedT].name
               unit(in.DefinedTExpr(name)(src))
             case Some(f: ap.Function) =>
               val name = idName(f.id, info)
-              unit(in.FunctionObject(in.FunctionProxy(name)(src), typeD(info.typ(f.id), Addressability.rValue)(src))(src))
+              unit(in.FunctionObject(in.FunctionProxy(name)(src), typeD(info.typ(f.id), OwnerModifier.rValue)(src))(src))
             case Some(m: ap.ReceivedMethod) =>
               for {
                 r <- exprD(ctx, info)(m.recv)
-              } yield in.MethodObject(applyMemberPathD(r, m.path)(src), methodProxy(m.id, info), typeD(info.typ(n), Addressability.rValue)(src))(src)
+              } yield in.MethodObject(applyMemberPathD(r, m.path)(src), methodProxy(m.id, info), typeD(info.typ(n), OwnerModifier.rValue)(src))(src)
             case Some(p) => Violation.violation(s"only field selections, global constants, types and methods can be desugared to an expression, but got $p")
             case _ => Violation.violation(s"could not resolve $n")
           }
@@ -2523,7 +2524,7 @@ object Desugar {
           case n: PTypeAssertion =>
             for {
               inExpr <- go(n.base)
-              inArg = typeD(info.symbType(n.typ), Addressability.typeAssertionResult)(src)
+              inArg = typeD(info.symbType(n.typ), OwnerModifier.typeAssertionResult)(src)
             } yield in.TypeAssertion(inExpr, inArg)(src)
 
           case PNegation(op) => for {o <- go(op)} yield in.Negation(o)(src)
@@ -2638,7 +2639,7 @@ object Desugar {
             val dOp = pureExprD(ctx, info)(op)
             unit((ass.left zip ass.right).foldRight(dOp)((lr, letop) => {
               val right = pureExprD(ctx, info)(lr._2)
-              val left = in.LocalVar(nm.variable(lr._1.name, info.scope(lr._1), info), right.typ.withAddressability(Addressability.exclusiveVariable))(src)
+              val left = in.LocalVar(nm.variable(lr._1.name, info.scope(lr._1), info), right.typ.withOwnerModifier(OwnerModifier.exclusiveVariable))(src)
               in.Let(left, right, letop)(src)
             }))
 
@@ -2698,7 +2699,7 @@ object Desugar {
           case g: PGhostExpression => ghostExprD(ctx, info)(g)
 
           case b: PBlankIdentifier =>
-            val typ = typeD(info.typ(b), Addressability.exclusiveVariable)(src)
+            val typ = typeD(info.typ(b), OwnerModifier.exclusiveVariable)(src)
             freshDeclaredExclusiveVar(typ, expr, info)(src)
 
           case PReceive(op) =>
@@ -2710,10 +2711,10 @@ object Desugar {
             } yield in.Receive(dop, recvChannel, recvGivenPerm, recvGotPerm)(src)
 
           case PMake(t, args) =>
-            def elemD(t: Type): in.Type = typeD(t, Addressability.make)(src)
+            def elemD(t: Type): in.Type = typeD(t, OwnerModifier.make)(src)
 
             // the target arguments must be always exclusive, that is an invariant of the desugarer
-            val resT = typeD(info.symbType(t), Addressability.Exclusive)(src)
+            val resT = typeD(info.symbType(t), OwnerModifier.Exclusive)(src)
 
             for {
               target <- freshDeclaredExclusiveVar(resT, expr, info)(src)
@@ -2736,8 +2737,8 @@ object Desugar {
             } yield target
 
           case PNew(t) =>
-            val allocatedType = typeD(info.symbType(t), Addressability.Exclusive)(src)
-            val targetT = in.PointerT(allocatedType.withAddressability(Addressability.Shared), Addressability.reference)
+            val allocatedType = typeD(info.symbType(t), OwnerModifier.Exclusive)(src)
+            val targetT = in.PointerT(allocatedType.withOwnerModifier(OwnerModifier.Shared), OwnerModifier.reference)
             for {
               target <- freshDeclaredExclusiveVar(targetT, expr, info)(src)
               zero = in.DfltVal(allocatedType)(src)
@@ -2750,12 +2751,12 @@ object Desugar {
                 dArgs <- sequence(args.map { x => option(x.map(exprD(ctx, info)(_))) })
                 idT = info.typ(base) match {
                   // TODO handle this
-                  case FunctionT(fnArgs, AssertionT) => in.PredT(fnArgs.map(typeD(_, Addressability.rValue)(src)), Addressability.rValue)
+                  case FunctionT(fnArgs, AssertionT) => in.PredT(fnArgs.map(typeD(_, OwnerModifier.rValue)(src)), OwnerModifier.rValue)
                   case _: AbstractType =>
                     violation(dArgs.length == dArgs.flatten.length, "non-applied arguments in abstract type")
                     // The result can have arguments, namely the arguments that are provided.
                     // The receiver type is not necessary, since this should already be partially applied by the typing of base
-                    in.PredT(dArgs.flatten.map(_.typ), Addressability.rValue)
+                    in.PredT(dArgs.flatten.map(_.typ), OwnerModifier.rValue)
                   case c => Violation.violation(s"This case should be unreachable, but got $c")
                 }
                 dImplicitlyConvertedArgs = (dArgs zip idT.args).map { case (optFrom, to) => optFrom.map(from => implicitConversion(from.typ, to, from)) }
@@ -2791,7 +2792,7 @@ object Desugar {
                     for {
                       dRecv <- exprAndTypeAsExpr(ctx, info)(b.recv)
                       proxy = getMPredProxy(dRecv.typ, baseT.args)
-                      idT = in.PredT(dRecv.typ +: baseT.args, Addressability.rValue)
+                      idT = in.PredT(dRecv.typ +: baseT.args, OwnerModifier.rValue)
                     } yield in.PredicateConstructor(proxy, idT, Some(dRecv) +: dArgs)(src)
                   })
 
@@ -2805,7 +2806,7 @@ object Desugar {
                     for {
                       dRecv <- exprAndTypeAsExpr(ctx, info)(b.recv)
                       proxy = getMPredProxy(dRecv.typ, baseT.args.tail) // args must include at least the receiver
-                      idT = in.PredT(baseT.args, Addressability.rValue)
+                      idT = in.PredT(baseT.args, OwnerModifier.rValue)
                     } yield in.PredicateConstructor(proxy, idT, dArgs)(src)
                   })
                 case c => Violation.violation(s"This case should be unreachable, but got $c")
@@ -2826,7 +2827,7 @@ object Desugar {
           val typType = info.symbType(typ)
           underlyingType(typType) match {
             case l if info.isEffectfulConversion(c) =>
-              val resT = typeD(l, Addressability.Exclusive)(src)
+              val resT = typeD(l, OwnerModifier.Exclusive)(src)
               for {
                 target <- freshDeclaredExclusiveVar(resT, expr, info)(src)
                 dArg <- exprD(ctx, info)(arg)
@@ -2836,10 +2837,10 @@ object Desugar {
             case t: InterfaceT =>
               for {
                 exp <- exprD(ctx, info)(arg)
-                tD  =  typeD(t, exp.typ.addressability)(src)
+                tD  =  typeD(t, exp.typ.ownerModifier)(src)
               } yield in.ToInterface(exp, tD)(exp.info)
             case _ =>
-              val desugaredTyp = typeD(typType, info.addressability(expr))(src)
+              val desugaredTyp = typeD(typType, info.getOwnerModifier(expr))(src)
               for { expr <- exprD(ctx, info)(arg) } yield in.Conversion(desugaredTyp, expr)(src)
           }
 
@@ -2854,7 +2855,7 @@ object Desugar {
         case MemberPath.Deref => in.Deref(e, underlyingType(e.typ))(pinfo)
         case MemberPath.Ref => in.Ref(e)(pinfo)
         case MemberPath.Next(g) =>
-          in.FieldRef(e, embeddedDeclD(g.decl, Addressability.fieldLookup(e.typ.addressability), g.context)(pinfo))(pinfo)
+          in.FieldRef(e, embeddedDeclD(g.decl, OwnerModifier.fieldLookup(e.typ.ownerModifier), g.context)(pinfo))(pinfo)
         case _: MemberPath.EmbeddedInterface => e
       }}
     }
@@ -2910,7 +2911,7 @@ object Desugar {
         case PIntLit(v, base)  => single(in.IntLit(v, base = base))
         case PBoolLit(b) => single(in.BoolLit(b))
         case PStringLit(s) => single(in.StringLit(s))
-        case nil: PNilLit => single(in.NilLit(typeD(info.nilType(nil).getOrElse(Type.PointerT(Type.BooleanT)), Addressability.literal)(src))) // if no type is found, then use *bool
+        case nil: PNilLit => single(in.NilLit(typeD(info.nilType(nil).getOrElse(Type.PointerT(Type.BooleanT)), OwnerModifier.literal)(src))) // if no type is found, then use *bool
         case f: PFunctionLit => registerFunctionLit(ctx, info)(f)
         case c: PCompositeLit => compositeLitD(ctx, info)(c)
         case _ => ???
@@ -2935,7 +2936,7 @@ object Desugar {
       // Both will have type Pointer(typeOf(v))
       val src: Meta = meta(v, info)
       val refAlias = nm.refAlias(idName(v, info), info.scope(v), info)
-      val param = in.Parameter.In(refAlias, typeD(PointerT(info.typ(v)), Addressability.inParameter)(src))(src)
+      val param = in.Parameter.In(refAlias, typeD(PointerT(info.typ(v)), OwnerModifier.inParameter)(src))(src)
       val localVar = in.LocalVar(nm.alias(refAlias, info.scope(v), info), param.typ)(src)
       (param, localVar)
     }
@@ -2944,11 +2945,11 @@ object Desugar {
 
       case t: PImplicitSizeArrayType =>
         val arrayLen : BigInt = lit.lit.elems.length
-        val arrayTyp = typeD(info.symbType(t.elem), Addressability.arrayElement(Addressability.literal))(meta(lit, info))
-        literalValD(ctx, info)(lit.lit, in.ArrayT(arrayLen, arrayTyp, Addressability.literal))
+        val arrayTyp = typeD(info.symbType(t.elem), OwnerModifier.arrayElement(OwnerModifier.literal))(meta(lit, info))
+        literalValD(ctx, info)(lit.lit, in.ArrayT(arrayLen, arrayTyp, OwnerModifier.literal))
 
       case t: PType =>
-        val it = typeD(info.symbType(t), Addressability.literal)(meta(lit, info))
+        val it = typeD(info.symbType(t), OwnerModifier.literal)(meta(lit, info))
         literalValD(ctx, info)(lit.lit, it)
 
       case _ => ???
@@ -2988,7 +2989,7 @@ object Desugar {
 
     def underlyingType(typ: in.Type): in.Type = {
       typ match {
-        case t: in.DefinedT => underlyingType(definedTypes(t.name, t.addressability)) // it is contained in the map, since 'typ' was translated
+        case t: in.DefinedT => underlyingType(definedTypes(t.name, t.ownerModifier)) // it is contained in the map, since 'typ' was translated
         case _ => typ
       }
     }
@@ -3006,7 +3007,7 @@ object Desugar {
     }
 
     def compositeValD(ctx : FunctionContext, info: TypeInfo)(expr : PCompositeVal, typ : in.Type) : Writer[in.Expr] = {
-      violation(typ.addressability.isExclusive, s"Literals always have exclusive types, but got $typ")
+      violation(typ.ownerModifier == OwnerModifier.Exclusive, s"Literals always have exclusive types, but got $typ")
 
       val e = expr match {
         case PExpCompositeVal(e) => exprD(ctx, info)(e)
@@ -3016,7 +3017,7 @@ object Desugar {
     }
 
     def literalValD(ctx: FunctionContext, info: TypeInfo)(lit: PLiteralValue, t: in.Type): Writer[in.Expr] = {
-      violation(t.addressability.isExclusive, s"Literals always have exclusive types, but got $t")
+      violation(t.ownerModifier == OwnerModifier.Exclusive, s"Literals always have exclusive types, but got $t")
 
       val src = meta(lit, info)
 
@@ -3105,14 +3106,14 @@ object Desugar {
           }
 
         case CompositeKind.Array(in.ArrayT(len, typ, addressability)) =>
-          Violation.violation(addressability == Addressability.literal, "Literals have to be exclusive")
+          Violation.violation(addressability == OwnerModifier.literal, "Literals have to be exclusive")
           for { elemsD <- sequence(lit.elems.map(e => compositeValD(ctx, info)(e.exp, typ))) }
             yield in.ArrayLit(len, typ, info.keyElementIndices(lit.elems).zip(elemsD).toMap)(src)
 
         case CompositeKind.Slice(t@ in.SliceT(typ, addressability)) =>
-          Violation.violation(addressability == Addressability.literal, "Literals have to be exclusive")
+          Violation.violation(addressability == OwnerModifier.literal, "Literals have to be exclusive")
           for {
-            elemsD <- sequence(lit.elems.map(e => compositeValD(ctx, info)(e.exp, typ.withAddressability(Addressability.Exclusive))))
+            elemsD <- sequence(lit.elems.map(e => compositeValD(ctx, info)(e.exp, typ.withOwnerModifier(OwnerModifier.Exclusive))))
             target <- freshDeclaredExclusiveVar(t, lit, info)(src)
             _ <- write(in.NewSliceLit(target, typ, info.keyElementIndices(lit.elems).zip(elemsD).toMap)(src))
           } yield target
@@ -3144,8 +3145,8 @@ object Desugar {
     }
 
     private def handleMapEntries(ctx: FunctionContext, info: TypeInfo)(lit: PLiteralValue, keys: in.Type, values: in.Type): Writer[Seq[(in.Expr, in.Expr)]] = {
-      violation(keys.addressability.isExclusive, s"Map literal keys always have exclusive types, but got $keys")
-      violation(values.addressability.isExclusive, s"Map literal values always have exclusive types, but got $values")
+      violation(keys.ownerModifier == OwnerModifier.Exclusive, s"Map literal keys always have exclusive types, but got $keys")
+      violation(values.ownerModifier == OwnerModifier.Exclusive, s"Map literal values always have exclusive types, but got $values")
 
       sequence(
         lit.elems map {
@@ -3175,29 +3176,29 @@ object Desugar {
       t
     }
 
-    var definedTypes: Map[(String, Addressability), in.Type] = Map.empty
-    var definedTypesSet: Set[(String, Addressability)] = Set.empty
+    var definedTypes: Map[(String, modifiers.OwnerModifier), in.Type] = Map.empty
+    var definedTypesSet: Set[(String, modifiers.OwnerModifier)] = Set.empty
     var definedFunctions : Map[in.FunctionProxy, in.FunctionMember] = Map.empty
     var definedMethods: Map[in.MethodProxy, in.MethodMember] = Map.empty
     var definedMPredicates: Map[in.MPredicateProxy, in.MPredicate] = Map.empty
     var definedFPredicates: Map[in.FPredicateProxy, in.FPredicate] = Map.empty
     var definedFuncLiterals: Map[in.FunctionLitProxy, in.FunctionLitLike] = Map.empty
 
-    def registerDefinedType(t: Type.DeclaredT, addrMod: Addressability)(src: Meta): in.DefinedT = {
+    def registerDefinedType(t: Type.DeclaredT, addrMod: modifiers.OwnerModifier)(src: Meta): in.DefinedT = {
       // this type was declared in the current package
       val name = nm.typ(t.decl.left.name, t.context)
 
-      def register(addrMod: Addressability): Unit = {
+      def register(addrMod: modifiers.OwnerModifier): Unit = {
         if (!definedTypesSet.contains(name, addrMod)) {
           definedTypesSet += ((name, addrMod))
-          val newEntry = typeD(t.context.symbType(t.decl.right), Addressability.underlying(addrMod))(src)
+          val newEntry = typeD(t.context.symbType(t.decl.right), OwnerModifier.underlying(addrMod))(src)
           definedTypes += (name, addrMod) -> newEntry
         }
       }
 
       val invAddrMod = addrMod match {
-        case Addressability.Exclusive => Addressability.Shared
-        case Addressability.Shared => Addressability.Exclusive
+        case OwnerModifier.Exclusive => OwnerModifier.Shared
+        case OwnerModifier.Shared => OwnerModifier.Exclusive
       }
 
       register(addrMod)
@@ -3214,7 +3215,7 @@ object Desugar {
       if (!registeredInterfaces.contains(dT.name) && info == t.context.getTypeInfo) {
         registeredInterfaces += dT.name
 
-        val itfT = dT.withAddressability(Addressability.Exclusive)
+        val itfT = dT.withOwnerModifier(OwnerModifier.Exclusive)
         val xInfo = t.context.getTypeInfo
 
         t.decl.predSpecs foreach { p =>
@@ -3313,9 +3314,9 @@ object Desugar {
 
       val src = meta(decl, info)
       val subT = info.symbType(decl.subT)
-      val dSubT = typeD(subT, Addressability.Exclusive)(src)
+      val dSubT = typeD(subT, OwnerModifier.Exclusive)(src)
       val superT = info.symbType(decl.superT)
-      val dSuperT = interfaceType(typeD(superT, Addressability.Exclusive)(src)).get
+      val dSuperT = interfaceType(typeD(superT, OwnerModifier.Exclusive)(src)).get
 
       decl.alias foreach { al =>
         info.resolve(al.right) match {
@@ -3362,8 +3363,8 @@ object Desugar {
     lazy val interfaceImplementations: Map[in.InterfaceT, SortedSet[in.Type]] = {
       info.interfaceImplementations.map{ case (itfT, implTs) =>
         (
-          interfaceType(typeD(itfT, Addressability.Exclusive)(Source.Parser.Unsourced)).get,
-          SortedSet(implTs.map(implT => typeD(implT, Addressability.Exclusive)(Source.Parser.Unsourced)).toSeq: _*)
+          interfaceType(typeD(itfT, OwnerModifier.Exclusive)(Source.Parser.Unsourced)).get,
+          SortedSet(implTs.map(implT => typeD(implT, OwnerModifier.Exclusive)(Source.Parser.Unsourced)).toSeq: _*)
         )
       }
     }
@@ -3371,7 +3372,7 @@ object Desugar {
     def missingImplProofs: Vector[in.Member] = {
       info.missingImplProofs.map{ case (implT, itfT, implSymb, itfSymb) =>
         val subProxy = methodProxyFromSymb(implSymb)
-        val superT = interfaceType(typeD(itfT, Addressability.Exclusive)(Source.Parser.Unsourced)).get
+        val superT = interfaceType(typeD(itfT, OwnerModifier.Exclusive)(Source.Parser.Unsourced)).get
         val superProxy = methodProxyFromSymb(itfSymb)
         val receiver = receiverD(implSymb.decl.receiver, implSymb.context.getTypeInfo)._1
         val args = implSymb.args.zipWithIndex.map{ case (arg, idx) => inParameterD(arg, idx, implSymb.context.getTypeInfo)._1 }
@@ -3574,7 +3575,7 @@ object Desugar {
               val initDeclaredGlobs: Vector[in.Initialization] = sortedGlobVarDecls.flatMap(_.left).filter {
                 // do not initialize Exclusive variables to avoid unsoundnesses with the assumptions.
                 // TODO(another optimization) do not generate initialization code for variables with RHS.
-                _.typ.addressability.isShared
+                _.typ.ownerModifier == OwnerModifier.Shared
               }.map{ gVar =>
                 in.Initialization(gVar)(gVar.info)
               }
@@ -3660,7 +3661,7 @@ object Desugar {
 
     def fieldDeclAdtD(decl: PFieldDecl, context: ExternalTypeInfo, adt: AdtT)(src: Meta): in.Field = {
       val fieldName = nm.adtField(decl.id.name, adt)
-      val typ = typeD(context.symbType(decl.typ), Addressability.mathDataStructureElement)(src)
+      val typ = typeD(context.symbType(decl.typ), OwnerModifier.mathDataStructureElement)(src)
       in.Field(fieldName, typ, true)(src)
     }
 
@@ -3697,13 +3698,13 @@ object Desugar {
         .toMap
     }
 
-    def embeddedTypeD(t: PEmbeddedType, addrMod: Addressability)(src: Meta): in.Type = t match {
+    def embeddedTypeD(t: PEmbeddedType, addrMod: modifiers.OwnerModifier)(src: Meta): in.Type = t match {
       case PEmbeddedName(typ) => typeD(info.symbType(typ), addrMod)(src)
       case PEmbeddedPointer(typ) =>
-        registerType(in.PointerT(typeD(info.symbType(typ), Addressability.pointerBase)(src), addrMod))
+        registerType(in.PointerT(typeD(info.symbType(typ), OwnerModifier.pointerBase)(src), addrMod))
     }
 
-    def typeD(t: Type, addrMod: Addressability)(src: Source.Parser.Info): in.Type = t match {
+    def typeD(t: Type, addrMod: modifiers.OwnerModifier)(src: Source.Parser.Info): in.Type = t match {
       case Type.VoidType => in.VoidT
       case t: DeclaredT => registerType(registerDefinedType(t, addrMod)(src))
       case Type.BooleanT => in.BoolT(addrMod)
@@ -3711,22 +3712,22 @@ object Desugar {
       case Type.IntT(x) => in.IntT(addrMod, x)
       case Type.Float32T => in.Float32T(addrMod)
       case Type.Float64T => in.Float64T(addrMod)
-      case Type.ArrayT(length, elem) => in.ArrayT(length, typeD(elem, Addressability.arrayElement(addrMod))(src), addrMod)
-      case Type.SliceT(elem) => in.SliceT(typeD(elem, Addressability.sliceElement)(src), addrMod)
+      case Type.ArrayT(length, elem) => in.ArrayT(length, typeD(elem, OwnerModifier.arrayElement(addrMod))(src), addrMod)
+      case Type.SliceT(elem) => in.SliceT(typeD(elem, OwnerModifier.sliceElement)(src), addrMod)
       case Type.MapT(keys, values) =>
-        val keysD = typeD(keys, Addressability.mapKey)(src)
-        val valuesD = typeD(values, Addressability.mapValue)(src)
+        val keysD = typeD(keys, OwnerModifier.mapKey)(src)
+        val valuesD = typeD(values, OwnerModifier.mapValue)(src)
         in.MapT(keysD, valuesD, addrMod)
-      case Type.GhostSliceT(elem) => in.SliceT(typeD(elem, Addressability.sliceElement)(src), addrMod)
-      case Type.OptionT(elem) => in.OptionT(typeD(elem, Addressability.mathDataStructureElement)(src), addrMod)
-      case PointerT(elem) => registerType(in.PointerT(typeD(elem, Addressability.pointerBase)(src), addrMod))
-      case Type.ChannelT(elem, _) => in.ChannelT(typeD(elem, Addressability.channelElement)(src), addrMod)
-      case Type.SequenceT(elem) => in.SequenceT(typeD(elem, Addressability.mathDataStructureElement)(src), addrMod)
-      case Type.SetT(elem) => in.SetT(typeD(elem, Addressability.mathDataStructureElement)(src), addrMod)
-      case Type.MultisetT(elem) => in.MultisetT(typeD(elem, Addressability.mathDataStructureElement)(src), addrMod)
+      case Type.GhostSliceT(elem) => in.SliceT(typeD(elem, OwnerModifier.sliceElement)(src), addrMod)
+      case Type.OptionT(elem) => in.OptionT(typeD(elem, OwnerModifier.mathDataStructureElement)(src), addrMod)
+      case PointerT(elem) => registerType(in.PointerT(typeD(elem, OwnerModifier.pointerBase)(src), addrMod))
+      case Type.ChannelT(elem, _) => in.ChannelT(typeD(elem, OwnerModifier.channelElement)(src), addrMod)
+      case Type.SequenceT(elem) => in.SequenceT(typeD(elem, OwnerModifier.mathDataStructureElement)(src), addrMod)
+      case Type.SetT(elem) => in.SetT(typeD(elem, OwnerModifier.mathDataStructureElement)(src), addrMod)
+      case Type.MultisetT(elem) => in.MultisetT(typeD(elem, OwnerModifier.mathDataStructureElement)(src), addrMod)
       case Type.MathMapT(keys, values) =>
-        val keysD = typeD(keys, Addressability.mathDataStructureElement)(src)
-        val valuesD = typeD(values, Addressability.mathDataStructureElement)(src)
+        val keysD = typeD(keys, OwnerModifier.mathDataStructureElement)(src)
+        val valuesD = typeD(values, OwnerModifier.mathDataStructureElement)(src)
         in.MathMapT(keysD, valuesD, addrMod)
 
       case t: Type.StructT =>
@@ -3743,17 +3744,17 @@ object Desugar {
         val tAdt = Type.AdtT(t.adtT, t.context)
         val adt: in.AdtT = in.AdtT(nm.adt(tAdt), addrMod)
         val fields: Vector[in.Field] = (t.fields map { case (key: String, typ: Type) =>
-          in.Field(nm.adtField(key, tAdt), typeD(typ, Addressability.mathDataStructureElement)(src), true)(src)
+          in.Field(nm.adtField(key, tAdt), typeD(typ, OwnerModifier.mathDataStructureElement)(src), true)(src)
         }).toVector
         in.AdtClauseT(idName(t.decl.id, t.context.getTypeInfo), adt, fields, addrMod)
 
-      case Type.PredT(args) => in.PredT(args.map(typeD(_, Addressability.rValue)(src)), Addressability.rValue)
+      case Type.PredT(args) => in.PredT(args.map(typeD(_, OwnerModifier.rValue)(src)), OwnerModifier.rValue)
       case Type.FunctionT(args, result) => // TODO handle this
         val res = result match {
           case InternalTupleT(r) => r
           case r: Type => Vector(r)
         }
-        in.FunctionT(args.map(typeD(_, Addressability.rValue)(src)), res.map(typeD(_, Addressability.rValue)(src)), addrMod)
+        in.FunctionT(args.map(typeD(_, OwnerModifier.rValue)(src)), res.map(typeD(_, OwnerModifier.rValue)(src)), addrMod)
 
       case t: Type.InterfaceT =>
         val interfaceName = nm.interface(t)
@@ -3767,12 +3768,12 @@ object Desugar {
         registerDomain(t, domainT)
         domainT
 
-      case Type.InternalTupleT(ts) => in.TupleT(ts.map(t => typeD(t, Addressability.mathDataStructureElement)(src)), addrMod)
+      case Type.InternalTupleT(ts) => in.TupleT(ts.map(t => typeD(t, OwnerModifier.mathDataStructureElement)(src)), addrMod)
 
       case Type.SortT => in.SortT
 
       case Type.VariadicT(elem) =>
-        val elemD = typeD(elem, Addressability.sliceElement)(src)
+        val elemD = typeD(elem, OwnerModifier.sliceElement)(src)
         in.SliceT(elemD, addrMod)
 
       case Type.PermissionT => in.PermissionT(addrMod)
@@ -3827,7 +3828,7 @@ object Desugar {
     def globalConstD(c: st.Constant)(src: Meta): in.GlobalConst = {
       c match {
         case sc: st.SingleConstant =>
-          val typ = typeD(c.context.typ(sc.idDef), Addressability.constant)(src)
+          val typ = typeD(c.context.typ(sc.idDef), OwnerModifier.constant)(src)
           in.GlobalConst.Val(idName(sc.idDef, c.context.getTypeInfo), typ)(src)
         case _ => ???
       }
@@ -3859,7 +3860,7 @@ object Desugar {
     }
 
     def freshExclusiveVar(typ: in.Type, scope: PNode, ctx: ExternalTypeInfo)(info: Source.Parser.Info): in.LocalVar = {
-      require(typ.addressability == Addressability.exclusiveVariable)
+      require(typ.ownerModifier == OwnerModifier.exclusiveVariable)
       in.LocalVar(nm.fresh(scope, ctx), typ)(info)
     }
 
@@ -3871,7 +3872,7 @@ object Desugar {
     }
 
     def freshDeclaredExclusiveVar(typ: in.Type, scope: PNode, ctx: ExternalTypeInfo)(info: Source.Parser.Info): Writer[in.LocalVar] = {
-      require(typ.addressability == Addressability.exclusiveVariable)
+      require(typ.ownerModifier == OwnerModifier.exclusiveVariable)
       val res = in.LocalVar(nm.fresh(scope, ctx), typ)(info)
       declaredExclusiveVar(res)
     }
@@ -3896,7 +3897,7 @@ object Desugar {
 
       val src: Meta = meta(id, context)
 
-      val typ = typeD(context.typ(id), context.addressableVar(id))(meta(id, context))
+      val typ = typeD(context.typ(id), context.getVarOwnerModifier(id))(meta(id, context))
       in.LocalVar(idName(id, context), typ)(src)
     }
 
@@ -3915,12 +3916,12 @@ object Desugar {
         case NoGhost(noGhost: PActualParameter) =>
           noGhost match {
             case PNamedParameter(id, typ) =>
-              val param = in.Parameter.In(idName(id, context), typeD(context.symbType(typ), Addressability.inParameter)(src))(src)
+              val param = in.Parameter.In(idName(id, context), typeD(context.symbType(typ), OwnerModifier.inParameter)(src))(src)
               val local = Some(localAlias(localVarContextFreeD(id, context), id, context))
               (param, local)
 
             case PUnnamedParameter(typ) =>
-              val param = in.Parameter.In(nm.inParam(idx, context.codeRoot(p), context), typeD(context.symbType(typ), Addressability.inParameter)(src))(src)
+              val param = in.Parameter.In(nm.inParam(idx, context.codeRoot(p), context), typeD(context.symbType(typ), OwnerModifier.inParameter)(src))(src)
               val local = None
               (param, local)
           }
@@ -3936,12 +3937,12 @@ object Desugar {
         case NoGhost(noGhost: PActualParameter) =>
           noGhost match {
             case PNamedParameter(id, typ) =>
-              val param = in.Parameter.Out(idName(id, context), typeD(context.symbType(typ), Addressability.outParameter)(src))(src)
+              val param = in.Parameter.Out(idName(id, context), typeD(context.symbType(typ), OwnerModifier.outParameter)(src))(src)
               val local = Some(localAlias(localVarContextFreeD(id, context), id, context))
               (param, local)
 
             case PUnnamedParameter(typ) =>
-              val param = in.Parameter.Out(nm.outParam(idx, context.codeRoot(p), context), typeD(context.symbType(typ), Addressability.outParameter)(src))(src)
+              val param = in.Parameter.Out(nm.outParam(idx, context.codeRoot(p), context), typeD(context.symbType(typ), OwnerModifier.outParameter)(src))(src)
               val local = None
               (param, local)
           }
@@ -3953,12 +3954,12 @@ object Desugar {
       val src: Meta = meta(p, context)
       p match {
         case PNamedReceiver(id, typ, _) =>
-          val param = in.Parameter.In(idName(id, context), typeD(context.symbType(typ), Addressability.receiver)(src))(src)
+          val param = in.Parameter.In(idName(id, context), typeD(context.symbType(typ), OwnerModifier.receiver)(src))(src)
           val local = Some(localAlias(localVarContextFreeD(id, context), id, context))
           (param, local)
 
         case PUnnamedReceiver(typ) =>
-          val param = in.Parameter.In(nm.receiver(context.codeRoot(p), context), typeD(context.symbType(typ), Addressability.receiver)(src))(src)
+          val param = in.Parameter.In(nm.receiver(context.codeRoot(p), context), typeD(context.symbType(typ), OwnerModifier.receiver)(src))(src)
           val local = None
           (param, local)
       }
@@ -3968,36 +3969,36 @@ object Desugar {
       case in.LocalVar(id, typ) => in.LocalVar(nm.alias(id, scope, ctx), typ)(internal.info)
     }
 
-    def structD(struct: StructT, addrMod: Addressability)(src: Meta): Vector[in.Field] =
+    def structD(struct: StructT, addrMod: modifiers.OwnerModifier)(src: Meta): Vector[in.Field] =
       struct.clauses.map {
-        case (name, (true, typ)) => fieldDeclD((name, typ), Addressability.field(addrMod), struct)(src)
-        case (name, (false, typ)) => embeddedDeclD((name, typ), Addressability.field(addrMod), struct)(src)
+        case (name, (true, typ)) => fieldDeclD((name, typ), OwnerModifier.field(addrMod), struct)(src)
+        case (name, (false, typ)) => embeddedDeclD((name, typ), OwnerModifier.field(addrMod), struct)(src)
       }.toVector
 
-    def structMemberD(m: st.StructMember, addrMod: Addressability)(src: Meta): in.Field = m match {
+    def structMemberD(m: st.StructMember, addrMod: modifiers.OwnerModifier)(src: Meta): in.Field = m match {
       case st.Field(decl, _, context) => fieldDeclD(decl, addrMod, context)(src)
       case st.Embbed(decl, _, context) => embeddedDeclD(decl, addrMod, context)(src)
     }
 
-    def embeddedDeclD(embedded: (String, Type), fieldAddrMod: Addressability, struct: StructT)(src: Source.Parser.Info): in.Field = {
+    def embeddedDeclD(embedded: (String, Type), fieldAddrMod: modifiers.OwnerModifier, struct: StructT)(src: Source.Parser.Info): in.Field = {
       val idname = nm.field(embedded._1, struct)
       val td = typeD(embedded._2, fieldAddrMod)(src)
       in.Field(idname, td, ghost = false)(src) // TODO: fix ghost attribute
     }
 
-    def embeddedDeclD(decl: PEmbeddedDecl, addrMod: Addressability, context: ExternalTypeInfo)(src: Meta): in.Field = {
+    def embeddedDeclD(decl: PEmbeddedDecl, addrMod: modifiers.OwnerModifier, context: ExternalTypeInfo)(src: Meta): in.Field = {
       val struct = context.struct(decl)
       val embedded: (String, Type) = (decl.id.name, context.typ(decl.typ))
       embeddedDeclD(embedded, addrMod, struct.get)(src)
     }
 
-    def fieldDeclD(field: (String, Type), fieldAddrMod: Addressability, struct: StructT)(src: Source.Parser.Info): in.Field = {
+    def fieldDeclD(field: (String, Type), fieldAddrMod: modifiers.OwnerModifier, struct: StructT)(src: Source.Parser.Info): in.Field = {
       val idname = nm.field(field._1, struct)
       val td = typeD(field._2, fieldAddrMod)(src)
       in.Field(idname, td, ghost = false)(src) // TODO: fix ghost attribute
     }
 
-    def fieldDeclD(decl: PFieldDecl, addrMod: Addressability, context: ExternalTypeInfo)(src: Meta): in.Field = {
+    def fieldDeclD(decl: PFieldDecl, addrMod: modifiers.OwnerModifier, context: ExternalTypeInfo)(src: Meta): in.Field = {
       val struct = context.struct(decl)
       val field: (String, Type) = (decl.id.name, context.symbType(decl.typ))
       fieldDeclD(field, addrMod, struct.get)(src)
@@ -4095,10 +4096,10 @@ object Desugar {
         } yield in.MatchValue(e)(src)
 
         case PMatchBindVar(idn) =>
-          unit(in.MatchBindVar(idName(idn, info.getTypeInfo), typeD(info.typ(idn), Addressability.Exclusive)(src))(src))
+          unit(in.MatchBindVar(idName(idn, info.getTypeInfo), typeD(info.typ(idn), OwnerModifier.Exclusive)(src))(src))
 
         case PMatchAdt(clause, fields) =>
-          val clauseType = typeD(info.symbType(clause), Addressability.Exclusive)(src)
+          val clauseType = typeD(info.symbType(clause), OwnerModifier.Exclusive)(src)
           for {
             fieldsD <- sequence(fields map goM)
           } yield in.MatchAdt(clauseType.asInstanceOf[in.AdtClauseT], fieldsD)(src)
@@ -4128,7 +4129,7 @@ object Desugar {
       // Generate a new local variable for an argument or result of the spec function.
       def localVarFromParam(p: PParameter): in.LocalVar = {
         val src = meta(p, funcTypeInfo)
-        val typ = typeD(funcTypeInfo.typ(p), Addressability.inParameter)(src)
+        val typ = typeD(funcTypeInfo.typ(p), OwnerModifier.inParameter)(src)
         in.LocalVar(nm.fresh(proof, info), typ)(src)
       }
 
@@ -4161,7 +4162,7 @@ object Desugar {
       // Create a local variable, as an alias of c (or recv, if c has the form recv.methodName)
       val recvOrClosureAlias = recvOrClosure map { exp =>
         val src = meta(exp, info)
-        val typ = typeD(info.typ(exp), Addressability.inParameter)(src)
+        val typ = typeD(info.typ(exp), OwnerModifier.inParameter)(src)
         in.LocalVar(nm.fresh(proof, info), typ)(src)
       }
 
@@ -4237,7 +4238,7 @@ object Desugar {
 
       val src: Meta = meta(expr, info)
 
-      val typ = typeD(info.typ(expr), info.addressability(expr))(src)
+      val typ = typeD(info.typ(expr), info.getOwnerModifier(expr))(src)
 
       expr match {
         case POld(op) => for {o <- go(op)} yield in.Old(o, typ)(src)
@@ -4351,7 +4352,7 @@ object Desugar {
         }
 
         case POptionNone(t) => {
-          val dt = typeD(info.symbType(t), Addressability.rValue)(src)
+          val dt = typeD(info.symbType(t), OwnerModifier.rValue)(src)
           unit(in.OptionNone(dt)(src))
         }
 
@@ -4430,7 +4431,7 @@ object Desugar {
     }
 
     def boundVariableD(x: PBoundVariable) : in.BoundVar =
-      in.BoundVar(idName(x.id, info), typeD(info.symbType(x.typ), Addressability.boundVariable)(meta(x, info)))(meta(x, info))
+      in.BoundVar(idName(x.id, info), typeD(info.symbType(x.typ), OwnerModifier.boundVariable)(meta(x, info)))(meta(x, info))
 
     def pureExprD(ctx: FunctionContext, info: TypeInfo)(expr: PExpression): in.Expr = {
       val dExp = exprD(ctx, info)(expr)
@@ -4598,7 +4599,7 @@ object Desugar {
 
         case b: ap.ImplicitlyReceivedInterfacePredicate =>
           val proxy = mpredicateProxyD(b.id, info)
-          val recvType = typeD(b.symb.itfType, Addressability.receiver)(src)
+          val recvType = typeD(b.symb.itfType, OwnerModifier.receiver)(src)
           unit(in.MPredicateAccess(implicitThisD(recvType)(src), proxy, convertArgs(dArgs))(src))
 
         case b: ap.BuiltInPredicate =>
@@ -4623,7 +4624,7 @@ object Desugar {
     }
 
     def implicitThisD(p: in.Type)(src: Source.Parser.Info): in.Parameter.In =
-      in.Parameter.In(nm.implicitThis, p.withAddressability(Addressability.receiver))(src)
+      in.Parameter.In(nm.implicitThis, p.withOwnerModifier(OwnerModifier.receiver))(src)
 
     def accessibleD(ctx: FunctionContext, info: TypeInfo)(acc: PExpression): Writer[in.Accessible] = {
 
@@ -4652,7 +4653,7 @@ object Desugar {
                 case PReference(op) => addressableD(ctx, info)(op) map (x => in.Accessible.Address(x.op))
                 case _ =>
                   goE(acc).map{ x =>
-                    val underlyingT = typeD(ut, Addressability.reference)(src)
+                    val underlyingT = typeD(ut, OwnerModifier.reference)(src)
                     in.Accessible.Address(in.Deref(x, underlyingT)(src))
                   }
               }
@@ -4683,7 +4684,7 @@ object Desugar {
             Some(for {
               // the well-definedness checker ensures that there is exactly one argument
               arg <- permissionD(ctx, info)(n.args.head)
-            } yield in.Conversion(in.PermissionT(Addressability.conversionResult), arg)(src))
+            } yield in.Conversion(in.PermissionT(OwnerModifier.conversionResult), arg)(src))
           case _ => None
         }
         case PFullPerm() => Some(unit(in.FullPerm(src)))

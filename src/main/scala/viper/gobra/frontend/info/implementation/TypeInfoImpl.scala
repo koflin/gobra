@@ -17,6 +17,7 @@ import viper.gobra.frontend.info.implementation.resolution.{AmbiguityResolution,
 import viper.gobra.frontend.info.implementation.typing._
 import viper.gobra.frontend.info.implementation.typing.ghost._
 import viper.gobra.frontend.info.implementation.typing.ghost.separation.GhostSeparation
+import viper.gobra.frontend.info.implementation.typing.modifiers.{GhostModifierUnit, Modifier, ModifierUnit, OwnerModifier, OwnerModifierUnit}
 import viper.gobra.frontend.info.{ExternalTypeInfo, Info, TypeInfo}
 
 class TypeInfoImpl(final val tree: Info.GoTree, final val context: Info.Context, val isMainContext: Boolean = false)(val config: Config) extends Attribution with TypeInfo with ExternalTypeInfo
@@ -36,6 +37,8 @@ class TypeInfoImpl(final val tree: Info.GoTree, final val context: Info.Context,
   with TypeTyping
   with IdTyping
   with MiscTyping
+
+  with ModifierTyping
 
   with GhostMemberTyping
   with GhostStmtTyping
