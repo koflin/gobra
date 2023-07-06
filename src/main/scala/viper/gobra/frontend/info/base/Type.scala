@@ -60,7 +60,7 @@ object Type {
 
   case class DomainT(decl: PDomainType, context: ExternalTypeInfo) extends PrettyType("domain{...}") with ContextualType
 
-  case class AdtT(decl: PAdtType, context: ExternalTypeInfo) extends Type
+  case class AdtT(decl: PAdtType, context: ExternalTypeInfo) extends PrettyType("adt{...}")
 
   case class AdtClauseT(fieldsToTypes: Map[String, Type], fields: Vector[String], decl: PAdtClause, adtT: PAdtType, context: ExternalTypeInfo) extends Type {
     require(fields.forall(fieldsToTypes.isDefinedAt), "there must be a type for each key")
@@ -126,6 +126,7 @@ object Type {
 
   case class InternalTupleT(ts: Vector[Type]) extends PrettyType(s"(${ts.mkString(",")})")
 
+  // TODO decide how to display this (define toString)
   case class InternalSingleMulti(sin: Type, mul: InternalTupleT) extends Type
 
   case class ImportT(decl: PImport) extends PrettyType(decl.formatted)
@@ -257,5 +258,8 @@ object Type {
       val newNode = constructorMirror(children: _*)
       newNode.asInstanceOf[this.type]
     }
+
+    // Override toString method to prevent that the toString method of the internal Node is used
+    override def toString: String = ???
   }
 }
