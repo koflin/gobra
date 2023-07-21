@@ -16,7 +16,6 @@ import viper.gobra.frontend.info.implementation.property._
 import viper.gobra.frontend.info.implementation.resolution.{AmbiguityResolution, Enclosing, LabelResolution, MemberPath, MemberResolution, NameResolution}
 import viper.gobra.frontend.info.implementation.typing._
 import viper.gobra.frontend.info.implementation.typing.ghost._
-import viper.gobra.frontend.info.implementation.typing.modifiers.{GhostModifierUnit, Modifier, ModifierUnit, OwnerModifier, OwnerModifierUnit}
 import viper.gobra.frontend.info.{ExternalTypeInfo, Info, TypeInfo}
 
 class TypeInfoImpl(final val tree: Info.GoTree, final val context: Info.Context, val isMainContext: Boolean = false)(val config: Config) extends Attribution with TypeInfo with ExternalTypeInfo
@@ -151,4 +150,6 @@ class TypeInfoImpl(final val tree: Info.GoTree, final val context: Info.Context,
   override def getTypeInfo: TypeInfo = this
 
   override def isPureExpression(expr: PExpression): Boolean = isPureExpr(expr).isEmpty
+
+  override def isParamGhost(param: PParameter): Boolean = ghostModifierUnit.isParamGhost(param)
 }

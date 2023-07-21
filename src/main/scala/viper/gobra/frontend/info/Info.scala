@@ -103,7 +103,7 @@ object Info {
   }
 
   private def getErasedGhostCode(pkg: PPackage, info: TypeInfoImpl): String = {
-    new GhostLessPrinter(info).format(pkg)
+    new GhostLessPrinter(info.ghostModifierUnit).format(pkg)
   }
 
   private def getGoifiedGhostCode(program: PPackage, info: TypeInfoImpl): String = {
