@@ -18,8 +18,6 @@ trait TypeInfo extends ExternalTypeInfo {
   def context: Info.Context
 
   def typOfExprOrType(expr: PExpressionOrType): Type
-  def getOwnerModifier(expr: PExpression): OwnerModifier
-  def getVarOwnerModifier(id: PIdnNode): OwnerModifier
 
   def tree: Tree[PNode, PPackage]
 

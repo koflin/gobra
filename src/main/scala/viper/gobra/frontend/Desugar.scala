@@ -3897,7 +3897,7 @@ object Desugar {
 
       val src: Meta = meta(id, context)
 
-      val typ = typeD(context.typ(id), context.getVarOwnerModifier(id))(meta(id, context))
+      val typ = typeD(context.typ(id), context.getOwnerModifier(id))(meta(id, context))
       in.LocalVar(idName(id, context), typ)(src)
     }
 
