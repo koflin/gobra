@@ -2691,6 +2691,8 @@ class ParserUnitTests extends AnyFunSuite with Matchers with Inside {
     frontend.parseStmtOrFail("for { x := 42 }") should matchPattern {
       case PForStmt(None, PBoolLit(true), None, PLoopSpec(Vector(), None), PBlock(Vector(PShortVarDecl(Vector(value), Vector(PIdnUnk(varname)), Vector(false)))))
         if varname == "x" && value == PIntLit(42) =>
+    }
+  }
         
   test("Parser: should be able to parse function with type parameters") {
     frontend.parseFunctionDecl("func foo[T any](x T) {}") should matchPattern {
@@ -2753,13 +2755,6 @@ class ParserUnitTests extends AnyFunSuite with Matchers with Inside {
         Vector(PIntLit(_, _)),
         None
       ) =>
-    }
-  }
-
-  test("Parser: should be able to parse an empty for clause") {
-    frontend.parseStmtOrFail("for { x := 42 }") should matchPattern {
-      case PForStmt(None, PBoolLit(true), None, PLoopSpec(Vector(), None), PBlock(Vector(PShortVarDecl(Vector(value), Vector(PIdnUnk(varname)), Vector(false)))))
-        if varname == "x" && value == PIntLit(42) =>
     }
   }
 }
