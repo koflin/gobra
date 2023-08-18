@@ -193,7 +193,7 @@ commCase: CASE (sendStmt | recvStmt) | DEFAULT;
 
 recvStmt: (expressionList ASSIGN | identifierList DECLARE_ASSIGN)? recvExpr = expression;
 
-forStmt: FOR (expression | forClause | rangeClause)? block;
+forStmt: FOR (expression? | forClause | rangeClause?) block;
 
 forClause:
 	initStmt = simpleStmt? eos expression? eos postStmt = simpleStmt?;
