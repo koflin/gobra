@@ -1,0 +1,5 @@
+package pkg
+type pair[A any, B any] struct { a A; b B }
+func main() {
+var _ = pair[int, pair[int, int]]{1, pair[int, int]{0, 0}}
+}
