@@ -60,7 +60,7 @@ object Type {
 
   case class DomainT(decl: PDomainType, context: ExternalTypeInfo) extends PrettyType("domain{...}") with ContextualType
 
-  case class AdtT(decl: PAdtType, context: ExternalTypeInfo) extends PrettyType("adt{...}")
+  case class AdtT(decl: PAdtType, context: ExternalTypeInfo) extends Type
 
   case class AdtClauseT(fieldsToTypes: Map[String, Type], fields: Vector[String], decl: PAdtClause, adtT: PAdtType, context: ExternalTypeInfo) extends Type {
     require(fields.forall(fieldsToTypes.isDefinedAt), "there must be a type for each key")
